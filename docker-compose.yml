@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  postgresql-b:
+    image: postgres
+    environment:
+      POSTGRES_PASSWORD: admin
+    ports:
+      - '5432:5432'
+    volumes:
+      - "data_postgres:/var/lib/postgresql/data"
+      - ./scripts/fdw_main_server.sql:/docker-entrypoint-initdb.d/init.sql
+
+    depends_on:
+      - postgresql-b1
+      - postgresql-b2
+
+  postgresql-b1:
+    image: postgres
+    environment:
+      POSTGRES_PASSWORD: admin
+    ports:
+      - '6432:5432'
+    volumes:
+      - "data_postgres1:/var/lib/postgresql/data"
+      - ./scripts/fdw_shard_server1.sql:/docker-entrypoint-initdb.d/init.sql
+
+  postgresql-b2:
+    image: postgres
+    environment:
+      POSTGRES_PASSWORD: admin
+    ports:
+      - '7432:5432'
+    volumes:
+      - "data_postgres2:/var/lib/postgresql/data"
+      - ./scripts/fdw_shard_server2.sql:/docker-entrypoint-initdb.d/init.sql
+
+  postgresql-single:
+    image: postgres
+    environment:
+      POSTGRES_PASSWORD: admin
+    ports:
+      - '8432:5432'
+    volumes:
+      - "data_postgres_single:/var/lib/postgresql/data"
+      - ./scripts/postgresql_single.sql:/docker-entrypoint-initdb.d/init.sql
+
+  citus-master:
+    image: citusdata/citus:12.1.1
+    ports:
+      - "5503:5432"
+    environment: &AUTH
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      PGUSER: postgres
+      PGPASSWORD: admin
+      POSTGRES_HOST_AUTH_METHOD: trust
+      CITUS_HOST: citus-master
+
+  citus-worker1:
+    image: citusdata/citus:12.1.1
+    labels: [ "com.citusdata.role=Worker" ]
+    depends_on:
+      - citus-manager
+    environment: *AUTH
+    command: "/wait-for-manager.sh"
+    volumes:
+      - healthcheck-volume:/healthcheck
+
+  citus-worker2:
+    image: citusdata/citus:12.1.1
+    labels: [ "com.citusdata.role=Worker" ]
+    depends_on:
+      - citus-manager
+    environment: *AUTH
+    command: "/wait-for-manager.sh"
+    volumes:
+      - healthcheck-volume:/healthcheck
+
+  citus-manager:
+    image: citusdata/membership-manager:0.3.0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - healthcheck-volume:/healthcheck
+    depends_on:
+      - citus-master
+    environment: *AUTH
+
+  app:
+    container_name: app
+    build: ./app
+    volumes:
+      - .m2:/root/.m2
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgresql-b:5432/postgres
+      - SPRING_DATASOURCE_USERNAME=postgres
+      - SPRING_DATASOURCE_PASSWORD=admin
+
+volumes:
+  data_postgres:
+  data_postgres1:
+  data_postgres2:
+  data_postgres_single:
+  healthcheck-volume:
